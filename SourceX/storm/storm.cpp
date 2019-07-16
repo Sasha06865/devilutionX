@@ -14,6 +14,13 @@
 
 #include "DiabloUI/diabloui.h"
 
+#ifndef SDL1_VIDEO_MODE_WIDTH
+#define SDL1_VIDEO_MODE_WIDTH SCREEN_WIDTH
+#endif
+#ifndef SDL1_VIDEO_MODE_HEIGHT
+#define SDL1_VIDEO_MODE_HEIGHT SCREEN_HEIGHT
+#endif
+
 namespace dvl {
 
 std::string basePath;
@@ -588,6 +595,8 @@ void SVidPlayBegin(char *filename, int a2, int a3, int a4, int a5, int flags, HA
 			ErrSdl();
 		}
 	}
+#elif SDL1_VIDEO_MODE_BPP == 8
+	SDL_SetVideoMode(SVidWidth, SVidHeight, SDL1_VIDEO_MODE_BPP, GetOutputSurface()->flags);
 #endif
 	memcpy(SVidPreviousPalette, orig_palette, 1024);
 
@@ -696,12 +705,16 @@ BOOL SVidPlayContinue(void)
 		const int scaledW = SVidWidth * factor;
 		const int scaledH = SVidHeight * factor;
 
+#if defined(USE_SDL1) && SDL1_VIDEO_MODE_BPP == 8
+		SDL_Rect pal_surface_offset = { 0, 0, SVidWidth, SVidHeight };
+#else
 		SDL_Rect pal_surface_offset = {
 			static_cast<decltype(SDL_Rect().x)>((SCREEN_WIDTH - scaledW) / 2),
 			static_cast<decltype(SDL_Rect().y)>((SCREEN_HEIGHT - scaledH) / 2),
 			static_cast<decltype(SDL_Rect().w)>(scaledW),
 			static_cast<decltype(SDL_Rect().h)>(scaledH)
 		};
+#endif
 #ifdef USE_SDL1
 		SDL_Surface *tmp = SDL_ConvertSurface(SVidSurface, window->format, 0);
 		// NOTE: Consider resolution switching instead if video doesn't play
@@ -758,6 +771,10 @@ void SVidPlayEnd(HANDLE video)
 
 	SFileCloseFile(video);
 	video = NULL;
+
+#if SDL1_VIDEO_MODE_BPP == 8
+	SDL_SetVideoMode(SDL1_VIDEO_MODE_WIDTH, SDL1_VIDEO_MODE_HEIGHT, SDL1_VIDEO_MODE_BPP, GetOutputSurface()->flags);
+#endif
 
 	memcpy(orig_palette, SVidPreviousPalette, 1024);
 #ifndef USE_SDL1
