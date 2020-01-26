@@ -2,7 +2,6 @@
 
 namespace dvl {
 
-constexpr auto DVL_OFS_MAXPATHNAME = 128;
 constexpr auto DVL_MAX_PATH = 260;
 
 typedef char CHAR;
@@ -176,8 +175,6 @@ typedef struct _LIST_ENTRY {
 
 DWORD GetTickCount();
 
-WINBOOL CloseHandle(HANDLE hObject);
-
 HANDLE CreateEventA(LPSECURITY_ATTRIBUTES lpEventAttributes, WINBOOL bManualReset, WINBOOL bInitialState,
     LPCSTR lpName);
 BOOL CloseEvent(HANDLE event);
@@ -312,16 +309,6 @@ typedef struct _IMAGE_SECTION_HEADER {
 
 typedef LONG LSTATUS, HKEY, REGSAM, PHKEY;
 
-WINBOOL WriteFile(HANDLE hFile, LPCVOID lpBuffer, DWORD nNumberOfBytesToWrite, LPDWORD lpNumberOfBytesWritten,
-    LPOVERLAPPED lpOverlapped);
-DWORD SetFilePointer(HANDLE hFile, LONG lDistanceToMove, PLONG lpDistanceToMoveHigh, DWORD dwMoveMethod);
-WINBOOL SetEndOfFile(HANDLE hFile);
-HANDLE CreateFileA(LPCSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode,
-    LPSECURITY_ATTRIBUTES lpSecurityAttributes, DWORD dwCreationDisposition,
-    DWORD dwFlagsAndAttributes, HANDLE hTemplateFile);
-WINBOOL ReadFile(HANDLE hFile, LPVOID lpBuffer, DWORD nNumberOfBytesToRead, LPDWORD lpNumberOfBytesRead,
-    LPOVERLAPPED lpOverlapped);
-DWORD GetFileSize(HANDLE hFile, LPDWORD lpFileSizeHigh);
 WINBOOL DeleteFileA(LPCSTR lpFileName);
 
 typedef struct _CONTEXT {
@@ -424,11 +411,6 @@ extern BOOL LoadArtWithPal(char *pszFile, void **pBuffer, int frames, DWORD *dat
 constexpr auto DVL_WM_SYSKEYUP = 0x0105;
 constexpr auto DVL_VER_PLATFORM_WIN32_NT = 2;
 
-constexpr auto DVL_CREATE_ALWAYS = 2;
-constexpr auto DVL_GENERIC_READ = 0x80000000L;
-constexpr auto DVL_GENERIC_WRITE = 0x40000000L;
-constexpr auto DVL_OPEN_EXISTING = 3;
-constexpr auto DVL_FILE_BEGIN = 0;
 constexpr auto DVL_FILE_CURRENT = 1;
 
 constexpr auto DVL_WM_QUIT = 0x0012;

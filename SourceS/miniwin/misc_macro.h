@@ -40,19 +40,7 @@
 // File I/O
 //
 
-#define FILE_BEGIN DVL_FILE_BEGIN
 #define FILE_CURRENT DVL_FILE_CURRENT
-#define FILE_END 2
-#define FILE_FLAG_WRITE_THROUGH 0x80000000
-#define CREATE_ALWAYS DVL_CREATE_ALWAYS
-#define GENERIC_READ DVL_GENERIC_READ
-#define GENERIC_WRITE DVL_GENERIC_WRITE
-#define OPEN_EXISTING DVL_OPEN_EXISTING
-#define OPEN_ALWAYS 4
-#define ERROR_SUCCESS DVL_ERROR_SUCCESS
-#define FILE_ATTRIBUTE_NORMAL 128
-
-#define OFS_MAXPATHNAME DVL_OFS_MAXPATHNAME
 
 //
 // Calculate the byte offset of a field in a structure of type type.
@@ -87,7 +75,6 @@
 #define KEY_WRITE 0x20006
 #define REG_SZ 1
 
-#define CreateFile CreateFileA
 #define DeleteFile DeleteFileA
 
 #define GWL_STYLE (-16)
