@@ -5,9 +5,10 @@
  */
 
 #include "dx.h"
+#include "engine/load_file.hpp"
+#include "engine/random.hpp"
+#include "hwcursor.hpp"
 #include "options.h"
-#include "render.h"
-#include "storm/storm.h"
 #include "utils/display.h"
 #include "utils/sdl_compat.h"
 
@@ -25,8 +26,8 @@ bool sgbFadedIn = true;
 
 void palette_update()
 {
-	assert(palette);
-	if (SDLC_SetSurfaceAndPaletteColors(pal_surface, palette, system_palette, 0, 256) < 0) {
+	assert(Palette);
+	if (SDLC_SetSurfaceAndPaletteColors(pal_surface, Palette, system_palette, 0, 256) < 0) {
 		ErrSdl();
 	}
 	pal_surface_palette_version++;
@@ -34,29 +35,26 @@ void palette_update()
 
 void ApplyGamma(SDL_Color *dst, const SDL_Color *src, int n)
 {
-	int i;
-	double g;
+	double g = sgOptions.Graphics.nGammaCorrection / 100.0;
 
-	g = sgOptions.Graphics.nGammaCorrection / 100.0;
-
-	for (i = 0; i < n; i++) {
-		dst[i].r = pow(src[i].r / 256.0, g) * 256.0;
-		dst[i].g = pow(src[i].g / 256.0, g) * 256.0;
-		dst[i].b = pow(src[i].b / 256.0, g) * 256.0;
+	for (int i = 0; i < n; i++) {
+		dst[i].r = static_cast<Uint8>(pow(src[i].r / 256.0, g) * 256.0);
+		dst[i].g = static_cast<Uint8>(pow(src[i].g / 256.0, g) * 256.0);
+		dst[i].b = static_cast<Uint8>(pow(src[i].b / 256.0, g) * 256.0);
 	}
 	force_redraw = 255;
 }
 
 static void LoadGamma()
 {
-	int gamma_value = sgOptions.Graphics.nGammaCorrection;
+	int gammaValue = sgOptions.Graphics.nGammaCorrection;
 
-	if (gamma_value < 30) {
-		gamma_value = 30;
-	} else if (gamma_value > 100) {
-		gamma_value = 100;
+	if (gammaValue < 30) {
+		gammaValue = 30;
+	} else if (gammaValue > 100) {
+		gammaValue = 100;
 	}
-	sgOptions.Graphics.nGammaCorrection = gamma_value - gamma_value % 5;
+	sgOptions.Graphics.nGammaCorrection = gammaValue - gammaValue % 5;
 }
 
 void palette_init()
@@ -64,6 +62,26 @@ void palette_init()
 	LoadGamma();
 	memcpy(system_palette, orig_palette, sizeof(orig_palette));
 	InitPalette();
+}
+
+static Uint8 FindBestMatchForColor(SDL_Color *palette, SDL_Color color, int skipFrom, int skipTo)
+{
+	Uint8 best;
+	Uint32 bestDiff = SDL_MAX_UINT32;
+	for (int i = 0; i < 256; i++) {
+		if (i >= skipFrom && i <= skipTo)
+			continue;
+		int diffr = palette[i].r - color.r;
+		int diffg = palette[i].g - color.g;
+		int diffb = palette[i].b - color.b;
+		Uint32 diff = diffr * diffr + diffg * diffg + diffb * diffb;
+
+		if (bestDiff > diff) {
+			best = i;
+			bestDiff = diff;
+		}
+	}
+	return best;
 }
 
 /**
@@ -95,51 +113,40 @@ static void GenerateBlendedLookupTable(SDL_Color *palette, int skipFrom, int ski
 				continue;
 			}
 
-			Uint8 r = ((int)palette[i].r + (int)palette[j].r) / 2;
-			Uint8 g = ((int)palette[i].g + (int)palette[j].g) / 2;
-			Uint8 b = ((int)palette[i].b + (int)palette[j].b) / 2;
-			Uint8 best;
-			Uint32 bestDiff = SDL_MAX_UINT32;
-			for (int k = 0; k < 256; k++) {
-				if (k >= skipFrom && k <= skipTo)
-					continue;
-				int diffr = palette[k].r - r;
-				int diffg = palette[k].g - g;
-				int diffb = palette[k].b - b;
-				Uint32 diff = diffr * diffr + diffg * diffg + diffb * diffb;
-
-				if (bestDiff > diff) {
-					best = k;
-					bestDiff = diff;
-				}
-			}
+			SDL_Color blendedColor;
+			blendedColor.r = ((int)palette[i].r + (int)palette[j].r) / 2;
+			blendedColor.g = ((int)palette[i].g + (int)palette[j].g) / 2;
+			blendedColor.b = ((int)palette[i].b + (int)palette[j].b) / 2;
+			Uint8 best = FindBestMatchForColor(palette, blendedColor, skipFrom, skipTo);
 			paletteTransparencyLookup[i][j] = best;
 		}
 	}
 }
 
-void LoadPalette(const char *pszFileName)
+void LoadPalette(const char *pszFileName, bool blend /*= true*/)
 {
-	int i;
-	void *pBuf;
-	BYTE PalData[256][3];
-
 	assert(pszFileName);
 
-	SFileOpenFile(pszFileName, &pBuf);
-	SFileReadFile(pBuf, (char *)PalData, sizeof(PalData), nullptr, nullptr);
-	SFileCloseFile(pBuf);
+	struct Color {
+		uint8_t r;
+		uint8_t g;
+		uint8_t b;
+	};
 
-	for (i = 0; i < 256; i++) {
-		orig_palette[i].r = PalData[i][0];
-		orig_palette[i].g = PalData[i][1];
-		orig_palette[i].b = PalData[i][2];
+	std::array<Color, 256> palData;
+
+	LoadFileInMem(pszFileName, palData);
+
+	for (unsigned i = 0; i < palData.size(); i++) {
+		orig_palette[i].r = palData[i].r;
+		orig_palette[i].g = palData[i].g;
+		orig_palette[i].b = palData[i].b;
 #ifndef USE_SDL1
 		orig_palette[i].a = SDL_ALPHA_OPAQUE;
 #endif
 	}
 
-	if (sgOptions.Graphics.bBlendedTransparancy) {
+	if (blend && sgOptions.Graphics.bBlendedTransparancy) {
 		if (leveltype == DTYPE_CAVES || leveltype == DTYPE_CRYPT) {
 			GenerateBlendedLookupTable(orig_palette, 1, 31);
 		} else if (leveltype == DTYPE_NEST) {
@@ -150,27 +157,29 @@ void LoadPalette(const char *pszFileName)
 	}
 }
 
-void LoadRndLvlPal(int l)
+void LoadRndLvlPal(dungeon_type l)
 {
-	int rv;
-	char szFileName[MAX_PATH];
-
 	if (l == DTYPE_TOWN) {
 		LoadPalette("Levels\\TownData\\Town.pal");
-	} else {
-		rv = GenerateRnd(4) + 1;
-		sprintf(szFileName, "Levels\\L%iData\\L%i_%i.PAL", l, l, rv);
-		if (l == 5) {
-			sprintf(szFileName, "NLevels\\L5Data\\L5Base.PAL");
-		}
-		if (l == 6) {
-			if (!gbNestArt) {
-				rv++;
-			}
-			sprintf(szFileName, "NLevels\\L%iData\\L%iBase%i.PAL", 6, 6, rv);
-		}
-		LoadPalette(szFileName);
+		return;
 	}
+
+	int rv = GenerateRnd(4) + 1;
+	if (l == DTYPE_CRYPT) {
+		LoadPalette("NLevels\\L5Data\\L5Base.PAL");
+		return;
+	}
+
+	char szFileName[27];
+	if (l == DTYPE_NEST) {
+		if (!gbNestArt) {
+			rv++;
+		}
+		sprintf(szFileName, "NLevels\\L%iData\\L%iBase%i.PAL", 6, 6, rv);
+	} else {
+		sprintf(szFileName, "Levels\\L%iData\\L%i_%i.PAL", l, l, rv);
+	}
+	LoadPalette(szFileName);
 }
 
 void ResetPal()
@@ -201,7 +210,7 @@ void DecreaseGamma()
 
 int UpdateGamma(int gamma)
 {
-	if (gamma) {
+	if (gamma > 0) {
 		sgOptions.Graphics.nGammaCorrection = 130 - gamma;
 		ApplyGamma(system_palette, logical_palette, 256);
 		palette_update();
@@ -209,16 +218,17 @@ int UpdateGamma(int gamma)
 	return 130 - sgOptions.Graphics.nGammaCorrection;
 }
 
-void SetFadeLevel(DWORD fadeval)
+void SetFadeLevel(int fadeval)
 {
-	int i;
-
-	for (i = 0; i < 256; i++) { // BUGFIX: should be 256 (fixed)
+	for (int i = 0; i < 256; i++) {
 		system_palette[i].r = (fadeval * logical_palette[i].r) / 256;
 		system_palette[i].g = (fadeval * logical_palette[i].g) / 256;
 		system_palette[i].b = (fadeval * logical_palette[i].b) / 256;
 	}
 	palette_update();
+	if (IsHardwareCursor()) {
+		ReinitializeHardwareCursor();
+	}
 }
 
 void BlackPalette()
@@ -230,13 +240,16 @@ void PaletteFadeIn(int fr)
 {
 	ApplyGamma(logical_palette, orig_palette, 256);
 
-	SDL_Rect SrcRect { BUFFER_BORDER_LEFT, BUFFER_BORDER_TOP, gnScreenWidth, gnScreenHeight };
 	const uint32_t tc = SDL_GetTicks();
 	fr *= 3;
 
+	uint32_t prevFadeValue = 255;
 	for (uint32_t i = 0; i < 256; i = fr * (SDL_GetTicks() - tc) / 50) {
-		SetFadeLevel(i);
-		BltFast(&SrcRect, nullptr);
+		if (i != prevFadeValue) {
+			SetFadeLevel(i);
+			prevFadeValue = i;
+		}
+		BltFast(nullptr, nullptr);
 		RenderPresent();
 	}
 	SetFadeLevel(256);
@@ -251,13 +264,16 @@ void PaletteFadeOut(int fr)
 	if (!sgbFadedIn)
 		return;
 
-	SDL_Rect SrcRect { BUFFER_BORDER_LEFT, BUFFER_BORDER_TOP, gnScreenWidth, gnScreenHeight };
 	const uint32_t tc = SDL_GetTicks();
 	fr *= 3;
 
+	uint32_t prevFadeValue = 0;
 	for (uint32_t i = 0; i < 256; i = fr * (SDL_GetTicks() - tc) / 50) {
-		SetFadeLevel(256 - i);
-		BltFast(&SrcRect, nullptr);
+		if (i != prevFadeValue) {
+			SetFadeLevel(256 - i);
+			prevFadeValue = i;
+		}
+		BltFast(nullptr, nullptr);
 		RenderPresent();
 	}
 	SetFadeLevel(0);
@@ -272,11 +288,13 @@ void PaletteFadeOut(int fr)
  */
 static void CycleColors(int from, int to)
 {
-	SDL_Color col = system_palette[from];
-	for (int i = from; i < to; i++) {
-		system_palette[i] = system_palette[i + 1];
+	{
+		SDL_Color col = system_palette[from];
+		for (int i = from; i < to; i++) {
+			system_palette[i] = system_palette[i + 1];
+		}
+		system_palette[to] = col;
 	}
-	system_palette[to] = col;
 
 	if (!sgOptions.Graphics.bBlendedTransparancy)
 		return;
@@ -304,11 +322,13 @@ static void CycleColors(int from, int to)
  */
 static void CycleColorsReverse(int from, int to)
 {
-	SDL_Color col = system_palette[to];
-	for (int i = to; i > from; i--) {
-		system_palette[i] = system_palette[i - 1];
+	{
+		SDL_Color col = system_palette[to];
+		for (int i = to; i > from; i--) {
+			system_palette[i] = system_palette[i - 1];
+		}
+		system_palette[from] = col;
 	}
-	system_palette[from] = col;
 
 	if (!sgOptions.Graphics.bBlendedTransparancy)
 		return;
@@ -375,14 +395,25 @@ void palette_update_hive()
 
 void palette_update_quest_palette(int n)
 {
-	int i;
-
-	for (i = 32 - n; i >= 0; i--) {
-		logical_palette[i] = orig_palette[i];
-	}
+	int i = 32 - n;
+	logical_palette[i] = orig_palette[i];
 	ApplyGamma(system_palette, logical_palette, 32);
 	palette_update();
-	GenerateBlendedLookupTable(logical_palette, 1, 31, 32 - n); // Possible optimization would be to only update color 0 as only the UI can overlap with transparency in this quest
+	if (sgOptions.Graphics.bBlendedTransparancy) {
+		// Update blended transparency, but only for the color that was updated
+		for (int j = 0; j < 256; j++) {
+			if (i == j) { // No need to calculate transparency between 2 identical colors
+				paletteTransparencyLookup[i][j] = j;
+				continue;
+			}
+			SDL_Color blendedColor;
+			blendedColor.r = ((int)logical_palette[i].r + (int)logical_palette[j].r) / 2;
+			blendedColor.g = ((int)logical_palette[i].g + (int)logical_palette[j].g) / 2;
+			blendedColor.b = ((int)logical_palette[i].b + (int)logical_palette[j].b) / 2;
+			Uint8 best = FindBestMatchForColor(logical_palette, blendedColor, 1, 31);
+			paletteTransparencyLookup[i][j] = paletteTransparencyLookup[j][i] = best;
+		}
+	}
 }
 
 } // namespace devilution

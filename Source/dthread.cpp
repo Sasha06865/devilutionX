@@ -4,127 +4,98 @@
  * Implementation of functions for updating game state from network commands.
  */
 
+#include <atomic>
+#include <list>
+#include <mutex>
+
 #include "nthread.h"
-#include "storm/storm.h"
+#include "utils/sdl_mutex.h"
 #include "utils/thread.h"
 
 namespace devilution {
 
-static CCritSect sgMemCrit;
+struct DThreadPkt {
+	int pnum;
+	_cmd_id cmd;
+	std::unique_ptr<byte[]> data;
+	uint32_t len;
+
+	DThreadPkt(int pnum, _cmd_id(cmd), std::unique_ptr<byte[]> data, uint32_t len)
+	    : pnum(pnum)
+	    , cmd(cmd)
+	    , data(std::move(data))
+	    , len(len)
+	{
+	}
+};
+
+namespace {
+
+SdlMutex DthreadMutex;
 SDL_threadID glpDThreadId;
-TMegaPkt *sgpInfoHead; /* may not be right struct */
-bool dthread_running;
+std::list<DThreadPkt> InfoList;
+std::atomic_bool dthread_running;
 event_emul *sghWorkToDoEvent;
 
 /* rdata */
-static SDL_Thread *sghThread = nullptr;
+SDL_Thread *sghThread = nullptr;
 
-static unsigned int dthread_handler(void *data)
+void DthreadHandler()
 {
-	const char *error_buf;
-	TMegaPkt *pkt;
-	DWORD dwMilliseconds;
-
 	while (dthread_running) {
-		if (sgpInfoHead == nullptr && WaitForEvent(sghWorkToDoEvent) == -1) {
-			error_buf = SDL_GetError();
-			app_fatal("dthread4:\n%s", error_buf);
-		}
+		if (InfoList.empty() && WaitForEvent(sghWorkToDoEvent) == -1)
+			app_fatal("dthread4:\n%s", SDL_GetError());
 
-		sgMemCrit.Enter();
-		pkt = sgpInfoHead;
-		if (sgpInfoHead != nullptr)
-			sgpInfoHead = sgpInfoHead->pNext;
-		else
+		DthreadMutex.lock();
+		if (InfoList.empty()) {
 			ResetEvent(sghWorkToDoEvent);
-		sgMemCrit.Leave();
-
-		if (pkt != nullptr) {
-			if (pkt->dwSpaceLeft != MAX_PLRS)
-				multi_send_zero_packet(pkt->dwSpaceLeft, static_cast<_cmd_id>(pkt->data[0]), &pkt->data[8], *(DWORD *)&pkt->data[4]);
-
-			dwMilliseconds = 1000 * *(DWORD *)&pkt->data[4] / gdwDeltaBytesSec;
-			if (dwMilliseconds >= 1)
-				dwMilliseconds = 1;
-
-			mem_free_dbg(pkt);
-
-			if (dwMilliseconds != 0)
-				SDL_Delay(dwMilliseconds);
+			DthreadMutex.unlock();
+			continue;
 		}
-	}
+		DThreadPkt pkt = std::move(InfoList.front());
+		InfoList.pop_front();
+		DthreadMutex.unlock();
 
-	return 0;
+		multi_send_zero_packet(pkt.pnum, pkt.cmd, pkt.data.get(), pkt.len);
+	}
 }
+
+} // namespace
 
 void dthread_remove_player(uint8_t pnum)
 {
-	TMegaPkt *pkt;
-
-	sgMemCrit.Enter();
-	for (pkt = sgpInfoHead; pkt != nullptr; pkt = pkt->pNext) {
-		if (pkt->dwSpaceLeft == pnum)
-			pkt->dwSpaceLeft = MAX_PLRS;
-	}
-	sgMemCrit.Leave();
+	std::lock_guard<SdlMutex> lock(DthreadMutex);
+	InfoList.remove_if([&](auto &pkt) {
+		return pkt.pnum == pnum;
+	});
 }
 
-void dthread_send_delta(int pnum, char cmd, void *pbSrc, int dwLen)
+void dthread_send_delta(int pnum, _cmd_id cmd, std::unique_ptr<byte[]> data, uint32_t len)
 {
-	TMegaPkt *pkt;
-	TMegaPkt *p;
-
-	if (!gbIsMultiplayer) {
+	if (!gbIsMultiplayer)
 		return;
-	}
 
-	pkt = (TMegaPkt *)DiabloAllocPtr(dwLen + 20);
-	pkt->pNext = nullptr;
-	pkt->dwSpaceLeft = pnum;
-	pkt->data[0] = cmd;
-	*(DWORD *)&pkt->data[4] = dwLen;
-	memcpy(&pkt->data[8], pbSrc, dwLen);
-	sgMemCrit.Enter();
-	p = (TMegaPkt *)&sgpInfoHead;
-	while (p->pNext != nullptr) {
-		p = p->pNext;
-	}
-	p->pNext = pkt;
+	DThreadPkt pkt { pnum, cmd, std::move(data), len };
 
+	std::lock_guard<SdlMutex> lock(DthreadMutex);
+	InfoList.push_back(std::move(pkt));
 	SetEvent(sghWorkToDoEvent);
-	sgMemCrit.Leave();
 }
 
 void dthread_start()
 {
-	const char *error_buf;
-
-	if (!gbIsMultiplayer) {
+	if (!gbIsMultiplayer)
 		return;
-	}
 
 	sghWorkToDoEvent = StartEvent();
-	if (sghWorkToDoEvent == nullptr) {
-		error_buf = SDL_GetError();
-		app_fatal("dthread:1\n%s", error_buf);
-	}
-
 	dthread_running = true;
-
-	sghThread = CreateThread(dthread_handler, &glpDThreadId);
-	if (sghThread == nullptr) {
-		error_buf = SDL_GetError();
-		app_fatal("dthread2:\n%s", error_buf);
-	}
+	sghThread = CreateThread(DthreadHandler, &glpDThreadId);
 }
 
-void dthread_cleanup()
+void DThreadCleanup()
 {
-	TMegaPkt *tmp;
-
-	if (sghWorkToDoEvent == nullptr) {
+	if (sghWorkToDoEvent == nullptr)
 		return;
-	}
 
 	dthread_running = false;
 	SetEvent(sghWorkToDoEvent);
@@ -135,11 +106,7 @@ void dthread_cleanup()
 	EndEvent(sghWorkToDoEvent);
 	sghWorkToDoEvent = nullptr;
 
-	while (sgpInfoHead != nullptr) {
-		tmp = sgpInfoHead->pNext;
-		MemFreeDbg(sgpInfoHead);
-		sgpInfoHead = tmp;
-	}
+	InfoList.clear();
 }
 
 } // namespace devilution
